@@ -6,7 +6,7 @@ BIN=`pwd`
 popd > /dev/null
 
 DATE=`date +%Y%m%d`
-DIR=release-$DATE;
+DIR=plastids-$DATE;
 mkdir $DIR || exit 1;
 
 cd $DIR;
