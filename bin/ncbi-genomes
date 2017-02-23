@@ -33,36 +33,28 @@ Thomas Hackl - S<thackl@lim4.de>
 
 =item -l/--list
 
-show ncbi assembly table.
-
-=item -a/--accessions [STDIN]
-
-limit to these accessions
+show full ncbi assembly table, limit with -a.
 
 =item -g/--get
 
-download these files
+download data, control with -a and -f
+
+=item -a/--accessions [STDIN]
+
+limit output/download to accessions from this file. Specify 'all' to download
+everything.
 
 =item -f/--files [genomic.fna,genomic.gff]
 
-comma-separated list of files to download. Common options:
-genomic.fna
-genomic.gbff
-genomic.gff
-protein.faa
-protein.gpff
+comma-separated list of files to download. Partial matches work, e.g. 'genomic'
+or '.fna'. Specify 'all' to download the entire folder. Common options:
 
-cds_from_genomic.fna
-rna_from_genomic.fna
-
-feature_table.txt
-assembly_report.txt
-assembly_stats.txt
-
-annotation_hashes.txt
-assembly_status.txt
+genomic.fna,genomic.gbff,genomic.gff,protein.faa,protein.gpff,
+cds_from_genomic.fna,rna_from_genomic.fna,feature_table.txt,
+assembly_report.txt,assembly_stats.txt,assembly_status.txt,
 md5checksums.txt
-README.txt
+
+NOTE: cds_from/rna_from are ignored unless 'cds'/'rna' are explicitly specified.
 
 =item -h/--help
 
@@ -82,7 +74,7 @@ $L->info("Using source: $opt{source}");
 
 my $DT = dt_update();
 my @c = dt_head();
-my %ACC = acc_read() if $opt{accessions};
+my %ACC = acc_read() if $opt{accessions} && !$opt{get_all};
 
 $opt{list} && dt_list();
 $opt{get} && dt_get();
@@ -143,6 +135,8 @@ sub init{
         if ($opt{accessions} eq '-') {
             $opt{stdin}++;
             $opt{afh} = \*STDIN;
+        } elsif ($opt{accessions} eq 'all') {
+            $opt{get_all}++
         } else {
             open($opt{afh}, '<', $opt{accessions}) or $L->logdie("$opt{accessions}: $!");
         }
@@ -224,7 +218,7 @@ sub dt_get{
     while (<DT>) {
         chomp();
         @r{@c} = split("\t", $_);
-        $opt{get_all}  || exists $ACC{$r{assembly_accession}} && r_get(%r);
+        ($opt{get_all} || exists $ACC{$r{assembly_accession}}) && r_get(%r);
     }
     close DT;
 }
