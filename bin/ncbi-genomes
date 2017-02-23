@@ -3,17 +3,18 @@
 # Author: Thomas Hackl, thackl@lim4.de
 use warnings;
 use strict;
-use Getopt::Long qw(:config no_ignore_case);;
+use Getopt::Long qw(:config no_ignore_case bundling);;
 use Pod::Usage;
 use Log::Log4perl qw(:no_extra_logdie_message);
 use Log::Log4perl::Level;
 use Data::Dumper;
 $Data::Dumper::Sortkeys = 1;
 use FindBin qw($Script $RealBin);
+use Cwd;
 
 =head1 NAME
 
-seq-trans
+ncbi-genomes
 
 =head1 DESCRIPTION
 
@@ -26,6 +27,9 @@ as reference for searching/downloading assemblies from NCBI
 Thomas Hackl - S<thackl@lim4.de>
 
 =head1 SYNOPSIS
+
+  # list all genomes, download the first E.coli genbank file
+  ncbi-genomes -lA | grep -m1 "Escherichia coli" | ncbi-genomes -gxmf genomic.gbff
 
 =head1 OPTIONS
 
@@ -41,13 +45,16 @@ download data, control with -a and -f
 
 =item -a/--accessions [STDIN]
 
-limit output/download to accessions from this file. Specify 'all' to download
-everything.
+limit --list/get to accessions from file. Specify 'all' for all.
+
+=item -A/--all-accessions
+
+show/download all available accessions.
 
 =item -f/--files [genomic.fna,genomic.gff]
 
 comma-separated list of files to download. Partial matches work, e.g. 'genomic'
-or '.fna'. Specify 'all' to download the entire folder. Common options:
+or '.fna'. 'all' downloads the complete folder. Common files:
 
 genomic.fna,genomic.gbff,genomic.gff,protein.faa,protein.gpff,
 cds_from_genomic.fna,rna_from_genomic.fna,feature_table.txt,
@@ -56,7 +63,21 @@ md5checksums.txt
 
 NOTE: cds_from/rna_from are ignored unless 'cds'/'rna' are explicitly specified.
 
+=item -H/--no-header
+
+omit header line in --list
+
+=item -m/--md5check
+
+check downloaded files against md5checksums.txt (md5sum -c)
+
+=item -x/--extract
+
+extract downloaded data (gzip -d)
+
 =item -h/--help
+
+=item -V/--version
 
 =back
 
@@ -64,7 +85,7 @@ NOTE: cds_from/rna_from are ignored unless 'cds'/'rna' are explicitly specified.
 
 =cut
 
-my $VERSION = '0.1.1';
+my $VERSION = '0.2.1';
 
 
 my %opt = init();
@@ -74,7 +95,7 @@ $L->info("Using source: $opt{source}");
 
 my $DT = dt_update();
 my @c = dt_head();
-my %ACC = acc_read() if $opt{accessions} && !$opt{get_all};
+my %ACC = acc_read() if $opt{accessions} && !$opt{all_accessions};
 
 $opt{list} && dt_list();
 $opt{get} && dt_get();
@@ -106,8 +127,9 @@ sub init{
         files => "genomic.fna,genomic.gff",
         accept => "",
         reject => "",
+        accessions => '-',
     );
-        
+
     my %opt = ();
     my $L = $opt{logger} = Log::Log4perl->get_logger();
 
@@ -116,8 +138,11 @@ sub init{
                             all|A!
                             get|g!
                             list|l!
-                            accessions|a:s
+                            accessions|a=s
+                            all_accessions|all-accessions|A!
                             source|s=s
+                            md5check|m!
+                            extract|x!
                             no_header|H!
                             debug|D!
                             help|h!
@@ -135,18 +160,15 @@ sub init{
 
     %opt = (%def, %opt);
 
-    if (defined($opt{accessions})){
-        $opt{accessions} = '-' if $opt{accessions} eq '';
+    if ($opt{accessions}){
         if ($opt{accessions} eq '-') {
             $opt{stdin}++;
             $opt{afh} = \*STDIN;
-        } elsif ($opt{accessions} eq 'all') {
-            $opt{get_all}++
         } else {
             open($opt{afh}, '<', $opt{accessions}) or $L->logdie("$opt{accessions}: $!");
         }
     }
-    
+
     if (defined($opt{source})) {
         $L->logdie("unknown source: $opt{source}\nonly genbank and refseq supported") unless grep{$opt{source} eq $_}qw(genbank refseq);
     }else {
@@ -158,6 +180,7 @@ sub init{
     if ($opt{files}){
         unless ($opt{files} eq 'all') {
             my @files = split(",", $opt{files});
+            push @files, 'md5' if $opt{md5check};
             $opt{accept} = '--accept '.join(",", map{"*$_*"}@files);
 
             # rna/cds_from_genomic.fna suck
@@ -167,7 +190,7 @@ sub init{
             $opt{reject} = '--reject '.join(",", @reject) if @reject && !grep{$_ eq "from"}@files;
         }
     }
-    
+
     $L->level($DEBUG) if $opt{debug};
     $L->debug('Verbose level set to DEBUG');
     $L->debug(Dumper(\%opt));
@@ -178,11 +201,11 @@ sub init{
 sub dt_update{
     my $asm_sum_ftp = $opt{ftp_ncbi_genomes}.'/ASSEMBLY_REPORTS/'.$opt{'asm_sum_'.$opt{source}};
     if (!-f $opt{dt} || (1 < -M $opt{dt})) {
-        $L->info("Updating $_");
+        $L->info("local $opt{source} table out of date - updating ..");
         my $re = qx(wget -O $opt{dt} $asm_sum_ftp);
         $? && $L->logdie($?);
     }
-    $L->info("$opt{source} assembly summary up-to-date")
+    $L->info("local $opt{source} table up-to-date")
 }
 
 sub dt_head{
@@ -202,8 +225,8 @@ sub dt_list{
     my ($h1,$h2) = (scalar <DT>, scalar <DT>); # skip header
     $opt{no_header} || print join("\t", @c),"\n";
 
-    if (!$opt{accessions}) {
-        print while <DT>;        
+    if ($opt{all_accessions}) {
+        print while <DT>;
     }else {
         while (<DT>) {
             my ($acc) = split("\t", $_, 2);
@@ -223,7 +246,11 @@ sub dt_get{
     while (<DT>) {
         chomp();
         @r{@c} = split("\t", $_);
-        ($opt{get_all} || exists $ACC{$r{assembly_accession}}) && r_get(%r);
+        if ( $opt{all_accessions} || exists $ACC{$r{assembly_accession}}){
+            r_get(%r);
+            r_md5check(%r) if $opt{md5check};
+            r_extract(%r) if $opt{extract};
+        }
     }
     close DT;
 }
@@ -235,6 +262,28 @@ sub r_get{
                    "-P", $r{assembly_accession}, "$r{ftp_path}/");
     $L->debug($cmd);
     qx($cmd);
+}
+
+sub r_md5check{
+    my %r = @_;
+    chdir $r{assembly_accession} or die 'Failed to chdir $!';
+    # need to ignore missing files (no --ignore-missing in old md5sum binaries)
+    open(MD5, "md5checksums.txt") or die $!;
+    while (<MD5>) {
+        chomp();
+        my ($md5, $file) = split (" ", $_);
+        my $re = qx(echo $_ | md5sum -c 2>&1) if -e $file;
+        $? && $L->logdie($re);
+    }
+    close MD5;
+    chdir '../';
+}
+
+sub r_extract{
+    my %r = @_;
+    chdir $r{assembly_accession} or die 'Failed to chdir $!';
+    qx(gzip -d *.gz);
+    chdir '../';
 }
 
 sub acc_read{
