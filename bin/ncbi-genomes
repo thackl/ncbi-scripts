@@ -89,7 +89,7 @@ prepend output dir with space-cleaned organism name.
 
 =cut
 
-my $VERSION = '0.2.1';
+my $VERSION = '0.2.2';
 
 
 my %opt = init();
@@ -285,8 +285,12 @@ sub r_md5check{
     while (<MD5>) {
         chomp();
         my ($md5, $file) = split (" ", $_);
-        my $re = qx(echo $_ | md5sum -c 2>&1) if -e $file;
-        $? && $L->logdie($re);
+        if (-e $file){
+            my $cmd = "echo \"$_\" | md5sum -c 2>&1";
+            $L->debug($cmd);
+            my $re = qx($cmd);
+            $? && $L->logdie($re);
+        }
     }
     close MD5;
     chdir '../';
