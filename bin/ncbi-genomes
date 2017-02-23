@@ -75,6 +75,10 @@ check downloaded files against md5checksums.txt (md5sum -c)
 
 extract downloaded data (gzip -d)
 
+=item -n/--use-names
+
+prepend output dir with space-cleaned organism name.
+
 =item -h/--help
 
 =item -V/--version
@@ -143,6 +147,7 @@ sub init{
                             source|s=s
                             md5check|m!
                             extract|x!
+                            use_names|n!
                             no_header|H!
                             debug|D!
                             help|h!
@@ -247,6 +252,13 @@ sub dt_get{
         chomp();
         @r{@c} = split("\t", $_);
         if ( $opt{all_accessions} || exists $ACC{$r{assembly_accession}}){
+            if ($opt{use_names}){
+                my $org = $r{organism_name};
+                $org =~ tr/ /_/;
+                $r{_local_dir} = $org.'_'.$r{assembly_accession};
+            }else {
+                $r{_local_dir} = $r{assembly_accession};
+            }
             r_get(%r);
             r_md5check(%r) if $opt{md5check};
             r_extract(%r) if $opt{extract};
@@ -259,14 +271,14 @@ sub r_get{
     my %r = @_;
     $L->info("\t$r{assembly_accession}\t$r{organism_name}");
     my $cmd = join(" ", qw(wget -q -nd -N -r), $opt{accept}, $opt{reject},
-                   "-P", $r{assembly_accession}, "$r{ftp_path}/");
+                   "-P", $r{_local_dir}, "$r{ftp_path}/");
     $L->debug($cmd);
     qx($cmd);
 }
 
 sub r_md5check{
     my %r = @_;
-    chdir $r{assembly_accession} or die 'Failed to chdir $!';
+    chdir $r{_local_dir} or die 'Failed to chdir $!';
     # need to ignore missing files (no --ignore-missing in old md5sum binaries)
     open(MD5, "md5checksums.txt") or die $!;
     while (<MD5>) {
@@ -281,7 +293,7 @@ sub r_md5check{
 
 sub r_extract{
     my %r = @_;
-    chdir $r{assembly_accession} or die 'Failed to chdir $!';
+    chdir $r{_local_dir} or die 'Failed to chdir $!';
     qx(gzip -d *.gz);
     chdir '../';
 }
