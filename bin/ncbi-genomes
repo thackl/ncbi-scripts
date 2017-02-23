@@ -207,6 +207,7 @@ sub dt_update{
     my $asm_sum_ftp = $opt{ftp_ncbi_genomes}.'/ASSEMBLY_REPORTS/'.$opt{'asm_sum_'.$opt{source}};
     if (!-f $opt{dt} || (1 < -M $opt{dt})) {
         $L->info("local $opt{source} table out of date - updating ..");
+        qx(mkdir -p $opt{data_path});
         my $re = qx(wget -O $opt{dt} $asm_sum_ftp);
         $? && $L->logdie($?);
     }
