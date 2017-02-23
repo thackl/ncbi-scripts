@@ -64,7 +64,7 @@ NOTE: cds_from/rna_from are ignored unless 'cds'/'rna' are explicitly specified.
 
 =cut
 
-my $VERSION = 0.1.0;
+my $VERSION = '0.1.1';
 
 
 my %opt = init();
@@ -121,10 +121,15 @@ sub init{
                             no_header|H!
                             debug|D!
                             help|h!
+                            version|V!
                     )) or $L->logdie('Failed to "GetOptions"');
 
     $opt{argv} = $argv; # store it just in case
     ($opt{help} || !$opt{argv}) && pod2usage(1);
+    if ($opt{version}){
+        print $Script.'-'.$VERSION,"\n";
+        exit 0;
+    }
 
     $L->logdie("unused argument: @ARGV") if @ARGV;
 
@@ -226,7 +231,7 @@ sub dt_get{
 sub r_get{
     my %r = @_;
     $L->info("\t$r{assembly_accession}\t$r{organism_name}");
-    my $cmd = join(" ", qw(wget -nv -nd -N -r), $opt{accept}, $opt{reject},
+    my $cmd = join(" ", qw(wget -q -nd -N -r), $opt{accept}, $opt{reject},
                    "-P", $r{assembly_accession}, "$r{ftp_path}/");
     $L->debug($cmd);
     qx($cmd);
