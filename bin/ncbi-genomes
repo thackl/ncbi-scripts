@@ -1,0 +1,251 @@
+#!/usr/bin/env perl
+# Created: 20 Feb 2017
+# Author: Thomas Hackl, thackl@lim4.de
+use warnings;
+use strict;
+use Getopt::Long qw(:config no_ignore_case);;
+use Pod::Usage;
+use Log::Log4perl qw(:no_extra_logdie_message);
+use Log::Log4perl::Level;
+use Data::Dumper;
+$Data::Dumper::Sortkeys = 1;
+use FindBin qw($Script $RealBin);
+
+=head1 NAME
+
+seq-trans
+
+=head1 DESCRIPTION
+
+uses
+ftp://ftp.ncbi.nlm.nih.gov/genomes/ASSEMBLY_REPORTS/assembly_summary_{refseq,genbank}.txt
+as reference for searching/downloading assemblies from NCBI
+
+=head1 AUTHOR
+
+Thomas Hackl - S<thackl@lim4.de>
+
+=head1 SYNOPSIS
+
+=head1 OPTIONS
+
+=over
+
+=item -l/--list
+
+show ncbi assembly table.
+
+=item -a/--accessions [STDIN]
+
+limit to these accessions
+
+=item -g/--get
+
+download these files
+
+=item -f/--files [genomic.fna,genomic.gff]
+
+comma-separated list of files to download. Common options:
+genomic.fna
+genomic.gbff
+genomic.gff
+protein.faa
+protein.gpff
+
+cds_from_genomic.fna
+rna_from_genomic.fna
+
+feature_table.txt
+assembly_report.txt
+assembly_stats.txt
+
+annotation_hashes.txt
+assembly_status.txt
+md5checksums.txt
+README.txt
+
+=item -h/--help
+
+=back
+
+=head1 MAIN
+
+=cut
+
+my $VERSION = 0.1.0;
+
+
+my %opt = init();
+my $L = $opt{logger};
+
+$L->info("Using source: $opt{source}");
+
+my $DT = dt_update();
+my @c = dt_head();
+my %ACC = acc_read() if $opt{accessions};
+
+$opt{list} && dt_list();
+$opt{get} && dt_get();
+
+
+
+##----------------------------------------------------------------------------##
+# subs
+##----------------------------------------------------------------------------##
+
+sub init{
+    no warnings 'qw';
+    my $argv = join(" ", @ARGV);
+
+    # logger
+    Log::Log4perl->init( \(q(
+        log4perl.rootLogger                     = INFO, Screen
+        log4perl.appender.Screen                = Log::Log4perl::Appender::Screen
+        log4perl.appender.Screen.stderr         = 1
+        log4perl.appender.Screen.layout         = PatternLayout
+        log4perl.appender.Screen.layout.ConversionPattern = [%d{yy-MM-dd HH:mm:ss}] [).$Script.q(] %m%n)));
+
+    my %def = (
+        ftp_ncbi_genomes => "ftp://ftp.ncbi.nlm.nih.gov/genomes",
+        data_path => "$RealBin/../data",
+        asm_sum_genbank => "assembly_summary_genbank.txt",
+        asm_sum_refseq => "assembly_summary_refseq.txt",
+        source => "refseq",
+        files => "genomic.fna,genomic.gff",
+        accept => "",
+        reject => "",
+    );
+        
+    my %opt = ();
+    my $L = $opt{logger} = Log::Log4perl->get_logger();
+
+    GetOptions(\%opt, qw(
+                            files|f=s
+                            all|A!
+                            get|g!
+                            list|l!
+                            accessions|a:s
+                            source|s=s
+                            no_header|H!
+                            debug|D!
+                            help|h!
+                    )) or $L->logdie('Failed to "GetOptions"');
+
+    $opt{argv} = $argv; # store it just in case
+    ($opt{help} || !$opt{argv}) && pod2usage(1);
+
+    $L->logdie("unused argument: @ARGV") if @ARGV;
+
+    %opt = (%def, %opt);
+
+    if (defined($opt{accessions})){
+        $opt{accessions} = '-' if $opt{accessions} eq '';
+        if ($opt{accessions} eq '-') {
+            $opt{stdin}++;
+            $opt{afh} = \*STDIN;
+        } else {
+            open($opt{afh}, '<', $opt{accessions}) or $L->logdie("$opt{accessions}: $!");
+        }
+    }
+    
+    if (defined($opt{source})) {
+        $L->logdie("unknown source: $opt{source}\nonly genbank and refseq supported") unless grep{$opt{source} eq $_}qw(genbank refseq);
+    }else {
+        pod2usage(exitval=>1, msg => "--source value required");
+    }
+
+    $opt{dt} = $opt{data_path}.'/'.$opt{'asm_sum_'.$opt{source}};
+
+    if ($opt{files}){
+        unless ($opt{files} eq 'all') {
+            my @files = split(",", $opt{files});
+            $opt{accept} = '--accept '.join(",", map{"*$_*"}@files);
+
+            # rna/cds_from_genomic.fna suck
+            my @reject;
+            push @reject, "*cds*" unless grep{/cds/}@files;
+            push @reject, "*rna*" unless grep{/rna/}@files;
+            $opt{reject} = '--reject '.join(",", @reject) if @reject && !grep{$_ eq "from"}@files;
+        }
+    }
+    
+    $L->level($DEBUG) if $opt{debug};
+    $L->debug('Verbose level set to DEBUG');
+    $L->debug(Dumper(\%opt));
+
+    return %opt;
+}
+
+sub dt_update{
+    my $asm_sum_ftp = $opt{ftp_ncbi_genomes}.'/ASSEMBLY_REPORTS/'.$opt{'asm_sum_'.$opt{source}};
+    if (!-f $opt{dt} || (1 < -M $opt{dt})) {
+        $L->info("Updating $_");
+        my $re = qx(wget -O $opt{dt} $asm_sum_ftp);
+        $? && $L->logdie($?);
+    }
+    $L->info("$opt{source} assembly summary up-to-date")
+}
+
+sub dt_head{
+    open(DT, $opt{dt}) or die $!;
+    my $h1 = <DT>;
+    my $h2 = <DT>;
+    close DT;
+
+    chomp($h2);
+    $h2 =~ s/^# //;
+
+    return split("\t", $h2);
+}
+
+sub dt_list{
+    open(DT, $opt{dt}) or die $!;
+    my ($h1,$h2) = (scalar <DT>, scalar <DT>); # skip header
+    $opt{no_header} || print join("\t", @c),"\n";
+
+    if (!$opt{accessions}) {
+        print while <DT>;        
+    }else {
+        while (<DT>) {
+            my ($acc) = split("\t", $_, 2);
+            print if exists $ACC{$acc};
+        }
+    }
+
+    close DT;
+}
+
+sub dt_get{
+    open(DT, $opt{dt}) or die $!;
+    my ($h1,$h2) = (scalar <DT>, scalar <DT>); # skip header
+    my %r;
+
+    $L->info("downloading ...");
+    while (<DT>) {
+        chomp();
+        @r{@c} = split("\t", $_);
+        $opt{get_all}  || exists $ACC{$r{assembly_accession}} && r_get(%r);
+    }
+    close DT;
+}
+
+sub r_get{
+    my %r = @_;
+    $L->info("\t$r{assembly_accession}\t$r{organism_name}");
+    my $cmd = join(" ", qw(wget -nv -nd -N -r), $opt{accept}, $opt{reject},
+                   "-P", $r{assembly_accession}, "$r{ftp_path}/");
+    $L->debug($cmd);
+    qx($cmd);
+}
+
+sub acc_read{
+    my $afh = $opt{afh};
+    $opt{stdin} && $L->info("reading accessions from STDIN");
+
+    my %ACC;
+    while (<$afh>) {
+        my ($acc) = split(/\s/, $_, 2);
+        $ACC{$acc}++;
+    }
+    return %ACC;
+}
